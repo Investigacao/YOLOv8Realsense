@@ -148,6 +148,7 @@ if __name__ == "__main__":
     # cv2.namedWindow("Detections", cv2.WINDOW_NORMAL)
     # cv2.resizeWindow("Detections", 800, 600)
 
+    model = YOLO('./train/runs/segment/tomate/weights/best.pt')
 
     # when stream is finished, RuntimeError is raised, hence this
     # exception block to capture this
@@ -177,7 +178,7 @@ if __name__ == "__main__":
             # get aligned frames
             aligned_depth_frame = aligned_frames.get_depth_frame()
             color_frame = aligned_frames.get_color_frame()
-            colorized_depth = np.asanyarray(colorizer.colorize(aligned_depth_frame).get_data())
+            # colorized_depth = np.asanyarray(colorizer.colorize(aligned_depth_frame).get_data())
 
             # validate that both frames are valid
             if not aligned_depth_frame or not color_frame:
@@ -186,11 +187,8 @@ if __name__ == "__main__":
             depth_image = np.asanyarray(aligned_depth_frame.get_data())
             color_image = np.asanyarray(color_frame.get_data())[:, :, ::-1]
 
-            model = YOLO('./train/runs/segment/tomate/weights/best.pt')
-            # model = YOLO('yolov8s-seg.pt')
-
             # Perform the prediction
-            results = model.predict(source=color_image, show=False)
+            results = model.predict(source=color_image, line_width = 5, boxes=False, device=0)
 
             annotated_frame = results[0].plot()
 
@@ -239,7 +237,7 @@ if __name__ == "__main__":
 
                         #? Straight line distance from object to claw
                         depthFromObjectToClaw = round(average_depth - OFFSET_FRONT, 3)
-                        new_Distance_to_Claw = (((average_depth - 3.5)/cos(radians(H_Angle)))**2 + (((average_depth-3.5)*tan(radians(V_Angle)))+5)**2)**0.5
+                        # new_Distance_to_Claw = (((average_depth - 3.5)/cos(radians(H_Angle)))**2 + (((average_depth-3.5)*tan(radians(V_Angle)))+5)**2)**0.5
 
                         #? Relative Coordinates calculation
                         #* Y calculation (how far the arm has to move left or right)
@@ -289,7 +287,7 @@ if __name__ == "__main__":
                             tempRobotList.append({"X": depthFromObjectToClaw, "Y": yCoordinate, "Z": zCoordinate, "dClawToFruit": distanceClawFruit }) # , "Class": "Tomato"
 
                         # draw a circle on the center of the box in annotated frame in blue color
-                        cv2.circle(annotated_frame, (int(cX), int(cY)), 5, (255, 0, 0), -1)
+                        # cv2.circle(annotated_frame, (int(cX), int(cY)), 5, (255, 0, 0), -1)
                         
             messageDigitalTwin[:] = tempDTList
             messageRobot[:] = tempRobotList
@@ -298,7 +296,7 @@ if __name__ == "__main__":
                 tomatoDetected.set()
 
             cv2.imshow("YOLOv8 Inference", annotated_frame)
-            cv2.imshow("Depth", colorized_depth)
+            # cv2.imshow("Depth", colorized_depth)
 
             time_end = time.time()
             total_time = time_end - time_start
