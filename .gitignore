@@ -1,0 +1,9 @@
+ultralytics
+Websockets_Server/node_modules
+train/datasets
+train/runs
+train/wandb
+train/output*.*
+train/video*.*
+train/yolov8*.pt
+train/*jpg
