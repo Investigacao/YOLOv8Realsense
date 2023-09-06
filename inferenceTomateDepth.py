@@ -11,6 +11,8 @@ import websocket
 from flask import Flask, jsonify
 import multiprocessing
 from sorting import custom_sort
+import subprocess
+import base64
 
 # OFFSET robot Front
 OFFSET_FRONT = 0.035
@@ -34,14 +36,6 @@ messageDigitalTwin = manager.list()
 messageRobot = manager.list()
 sendMessage = False
 tomatoDetected = Event()
-
-class DetectedObject:
-    def __init__(self, mask, box, label, score, class_name):
-        self.mask = mask
-        self.box = box
-        self.label = label
-        self.score = score
-        self.class_name = class_name
 
 def on_message(ws, message):    
     print("on_message: ", message)
@@ -67,7 +61,6 @@ def handleThreadResponse(ws):
 
 def websocket_thread(ws):
     while True:
-        print("Waiting for message")
         on_message(ws, json.loads(ws.recv()))
 
 def sendMessageTopics(ws, topics):
@@ -94,6 +87,8 @@ if __name__ == "__main__":
     parser.add_argument('-f', '--file', help='name.bag to stream using file instead of webcam')
     parser.add_argument('-ws', '--wsURL', help='url to connect to websocket server')
     parser.add_argument('-fl', '--flask', type=int, help='flask server port')
+    parser.add_argument('-r', '--rtmp', help='rtmp key')
+    parser.add_argument('-wsF', '--wsFrame', help='url to connect to websocket server to send annotated frames')
     args = parser.parse_args()
 
     config = rs.config()
@@ -112,6 +107,27 @@ if __name__ == "__main__":
         wsThread = Thread(target=websocket_thread, args=(ws,))
         wsThread.daemon = True
         wsThread.start()
+    
+    if args.rtmp:
+        command = ['ffmpeg',
+        '-y',
+        '-f', 'rawvideo',
+        '-vcodec', 'rawvideo',
+        '-pix_fmt', 'rgb24',
+        '-s', "{}x{}".format(1280,720),
+        '-r', str(5),
+        '-i', '-',
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-f', 'flv',
+        '-flvflags', 'no_duration_filesize',
+        f'rtmp://127.0.0.1/live/{args.rtmp}']
+        # 192.168.1.203:30439
+        p = subprocess.Popen(command, stdin=subprocess.PIPE)
+
+    if args.wsFrame:
+        wsFrame = websocket.WebSocket()
+        wsFrame.connect(args.wsFrame)
 
     if args.file:
         try:
@@ -123,6 +139,7 @@ if __name__ == "__main__":
         config.enable_stream(rs.stream.depth, RESOLUTION_X, RESOLUTION_Y, rs.format.z16, 30)
         config.enable_stream(rs.stream.color, RESOLUTION_X, RESOLUTION_Y, rs.format.bgr8, 30)
 
+    
     # Load the image
     pipeline = rs.pipeline()
     profile = pipeline.start(config)
@@ -294,6 +311,20 @@ if __name__ == "__main__":
             messageRobot.sort(key=custom_sort)
             if sendMessage and messageDigitalTwin:
                 tomatoDetected.set()
+            
+            if args.rtmp:
+                #? RTMP
+                rtmp_frames = annotated_frame[:,:,::-1]
+                p.stdin.write(rtmp_frames.tobytes())
+            
+            if args.wsFrame:
+                # Convert the frame to JPEG format
+                _, buffer = cv2.imencode('.jpg', annotated_frame)
+                frame_data = base64.b64encode(buffer).decode('utf-8')
+
+                # Send the frame data via WebSocket
+                wsFrame.send(frame_data)
+                print("Frame sent")
 
             cv2.imshow("YOLOv8 Inference", annotated_frame)
             # cv2.imshow("Depth", colorized_depth)
@@ -308,4 +339,6 @@ if __name__ == "__main__":
         cv2.destroyAllWindows()
         print("Finished")
     finally:
+        # ws.close()
+        # wsFrame.close()
         pipeline.stop()
