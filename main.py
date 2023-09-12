@@ -10,7 +10,7 @@ from threading import Thread, Event
 import websocket
 from flask import Flask, jsonify
 import multiprocessing
-from main.sorting import custom_sort
+from myapp.sorting import custom_sort
 import subprocess
 import base64
 
@@ -198,7 +198,7 @@ if __name__ == "__main__":
     # cv2.namedWindow("Detections", cv2.WINDOW_NORMAL)
     # cv2.resizeWindow("Detections", 800, 600)
 
-    model = YOLO("./models/yolov8m-tomato.pt")
+    model = YOLO("./myapp/models/yolov8m-tomato.pt")
 
     # when stream is finished, RuntimeError is raised, hence this
     # exception block to capture this
