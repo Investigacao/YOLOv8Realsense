@@ -95,25 +95,22 @@ class IMU:
         self.yaw = 0
         self.roll = 0
         self.pitch = 0
+        self.exit_event = Event()
 
-    def startIMU(self, imu_pipe):
-        self.imu_pipe = imu_pipe
+    def startIMU(self):
         self.imu_config = rs.config()
 
         self.imu_config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, 250)
         self.imu_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, 200)
-        self.imu_pipe.start(self.imu_config)
-
-        imu_thread = Thread(target=self.update_imu)
-        imu_thread.daemon = True
-        imu_thread.start()
 
     def update_imu(self):
+        self.imu_pipe = rs.pipeline()
+        self.imu_pipe.start(self.imu_config)
         try:
             first = True
             alpha = 0.98
             totalgyroangleY = 0
-            while True:
+            while not self.exit_event.is_set():
                 # Wait for a coherent pair of frames: depth and color
                 mot_frames = self.imu_pipe.wait_for_frames()
                 # ? gather IMU data
@@ -181,12 +178,8 @@ class IMU:
 
                 # print("Angle -  X: " + str(round(combinedangleX,2)) + "   Y: " + str(round(combinedangleY,2)) + "   Z: " + str(round(combinedangleZ,2)))
 
-        except:
-            self.imu_pipe.stop()
-            print("Error in Vision", sys.exc_info())
-
-        finally:
-            self.imu_pipe.stop()
+        except Exception as e:
+            print(f"Error in IMU update: {str(e)}")
 
 
 if __name__ == "__main__":
@@ -275,10 +268,14 @@ if __name__ == "__main__":
     profile = pipeline.start(config)
 
     imu_pipe = None
-    imu = IMU()
+    imu_thread = None
     if args.imu:
-        imu_pipe = rs.pipeline()
-        imu.startIMU(imu_pipe)
+        imu = IMU()
+        imu.startIMU()
+
+        imu_thread = Thread(target=imu.update_imu)
+        imu_thread.daemon = True
+        imu_thread.start()
 
     align_to = rs.stream.color
     align = rs.align(align_to)
@@ -333,7 +330,7 @@ if __name__ == "__main__":
             except RuntimeError:
                 pipeline.stop()
                 if args.imu:
-                    imu_pipe.stop()
+                    imu.imu_pipe.stop()
 
             # align the deph to color frame
             aligned_frames = align.process(frames)
@@ -537,9 +534,7 @@ if __name__ == "__main__":
         print("Finished")
 
     finally:
-        # ws.close()
-        # wsThread.join()
-        # wsFrame.close()
         pipeline.stop()
         if args.imu:
-            imu_pipe.stop()
+            imu.exit_event.set()
+            imu.imu_pipe.stop()
