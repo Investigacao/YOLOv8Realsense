@@ -198,7 +198,8 @@ if __name__ == "__main__":
     # cv2.namedWindow("Detections", cv2.WINDOW_NORMAL)
     # cv2.resizeWindow("Detections", 800, 600)
 
-    model = YOLO("./myapp/models/yolov8m-tomato.pt")
+    # model = YOLO("./myapp/models/yolov8m-tomato.pt")
+    model = YOLO("./myapp/models/tomato-279-yoloS.pt")
 
     # when stream is finished, RuntimeError is raised, hence this
     # exception block to capture this
@@ -298,8 +299,8 @@ if __name__ == "__main__":
 
                         # ? Relative Coordinates calculation
                         # * Y calculation (how far the arm has to move left or right)
-                        # * (after multiplying by -1) -> if the object is to the left of the center of the camera, the value is positive
-                        yCoordinate = tan(radians(H_Angle)) * average_depth * -1
+                        # * if the object is to the left of the center of the camera, the value is negative
+                        yCoordinate = tan(radians(H_Angle)) * average_depth
                         yCoordinate = (
                             0.046 * (yCoordinate) ** 2
                             + 0.863 * (yCoordinate)
@@ -373,6 +374,7 @@ if __name__ == "__main__":
                                     "x": depthFromObjectToClaw,
                                     "y": yCoordinate,
                                     "z": zCoordinate,
+                                    "w": fruit_width,
                                     "dClawToFruit": distanceClawFruit,
                                 }
                             )  # , "Class": "Tomato"
@@ -392,6 +394,7 @@ if __name__ == "__main__":
 
             if sendMessage and messageDigitalTwin:
                 tomatoDetected.set()
+                cv2.imwrite("frame.png", annotated_frame)
 
             if args.rtmp:
                 # ? RTMP
