@@ -13,6 +13,8 @@ import multiprocessing
 from myapp.sorting import custom_sort
 import subprocess
 import base64
+import math
+import sys
 
 # OFFSET robot Front
 OFFSET_FRONT = 0.035
@@ -88,6 +90,105 @@ def run_flask_server():
     app.run(host="0.0.0.0", port=args.flask)
 
 
+class IMU:
+    def __init__(self):
+        self.yaw = 0
+        self.roll = 0
+        self.pitch = 0
+
+    def startIMU(self, imu_pipe):
+        self.imu_pipe = imu_pipe
+        self.imu_config = rs.config()
+
+        self.imu_config.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, 250)
+        self.imu_config.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, 200)
+        self.imu_pipe.start(self.imu_config)
+
+        imu_thread = Thread(target=self.update_imu)
+        imu_thread.daemon = True
+        imu_thread.start()
+
+    def update_imu(self):
+        try:
+            first = True
+            alpha = 0.98
+            totalgyroangleY = 0
+            while True:
+                # Wait for a coherent pair of frames: depth and color
+                mot_frames = self.imu_pipe.wait_for_frames()
+                # ? gather IMU data
+                accel = mot_frames[0].as_motion_frame().get_motion_data()
+                gyro = mot_frames[1].as_motion_frame().get_motion_data()
+
+                ts = mot_frames.get_timestamp()
+
+                # calculation for the first frame
+                if first:
+                    first = False
+                    last_ts_gyro = ts
+
+                    # accelerometer calculation
+                    accel_angle_z = math.degrees(math.atan2(accel.y, accel.z))
+                    accel_angle_x = math.degrees(
+                        math.atan2(
+                            accel.x, math.sqrt(accel.y * accel.y + accel.z * accel.z)
+                        )
+                    )
+                    accel_angle_y = math.degrees(math.pi)
+
+                    continue
+                # calculation for the second frame onwards
+
+                # gyrometer calculations
+                dt_gyro = (ts - last_ts_gyro) / 1000
+                last_ts_gyro = ts
+
+                gyro_angle_x = gyro.x * dt_gyro
+                gyro_angle_y = gyro.y * dt_gyro
+                gyro_angle_z = gyro.z * dt_gyro
+
+                dangleX = gyro_angle_x * 57.2958
+                dangleY = gyro_angle_y * 57.2958
+                dangleZ = gyro_angle_z * 57.2958
+
+                totalgyroangleX = accel_angle_x + dangleX
+                # totalgyroangleY = accel_angle_y + dangleY
+                totalgyroangleY = accel_angle_y + dangleY + totalgyroangleY
+                totalgyroangleZ = accel_angle_z + dangleZ
+
+                # accelerometer calculation
+                accel_angle_z = math.degrees(math.atan2(accel.y, accel.z))
+                accel_angle_x = math.degrees(
+                    math.atan2(
+                        accel.x, math.sqrt(accel.y * accel.y + accel.z * accel.z)
+                    )
+                )
+                # accel_angle_y = math.degrees(math.pi)
+                accel_angle_y = 0
+
+                # combining gyrometer and accelerometer angles
+                self.roll = totalgyroangleX * alpha + accel_angle_x * (
+                    1 - alpha
+                )  # Roll
+                self.pitch = totalgyroangleZ * alpha + accel_angle_z * (
+                    1 - alpha
+                )  # Pitch
+                self.yaw = totalgyroangleY  # Yaw
+
+                self.yawtest = self.yaw
+                self.rolltest = self.roll
+                self.pitchtest = self.pitch
+
+                # print("Angle -  X: " + str(round(combinedangleX,2)) + "   Y: " + str(round(combinedangleY,2)) + "   Z: " + str(round(combinedangleZ,2)))
+
+        except:
+            self.imu_pipe.stop()
+            print("Error in Vision", sys.exc_info())
+
+        finally:
+            self.imu_pipe.stop()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -101,9 +202,8 @@ if __name__ == "__main__":
         "--wsFrame",
         help="url to connect to websocket server to send annotated frames",
     )
+    parser.add_argument("-i", "--imu", action="store_true", help="Enable IMU reading")
     args = parser.parse_args()
-
-    config = rs.config()
 
     if args.flask:
         # Create and start a separate thread for the Flask server
@@ -155,6 +255,7 @@ if __name__ == "__main__":
         wsFrame = websocket.WebSocket()
         wsFrame.connect(args.wsFrame)
 
+    config = rs.config()
     if args.file:
         try:
             config.enable_device_from_file(args.file, repeat_playback=False)
@@ -172,6 +273,12 @@ if __name__ == "__main__":
     # Load the image
     pipeline = rs.pipeline()
     profile = pipeline.start(config)
+
+    imu_pipe = None
+    imu = IMU()
+    if args.imu:
+        imu_pipe = rs.pipeline()
+        imu.startIMU(imu_pipe)
 
     align_to = rs.stream.color
     align = rs.align(align_to)
@@ -208,6 +315,9 @@ if __name__ == "__main__":
     try:
         while True:
             print("=====================================")
+            if args.imu:
+                print(f"Roll: {imu.roll} Pitch: {imu.pitch} Yaw: {imu.yaw}")
+
             # messageDigitalTwin[:] = []
             # messageRobot[:] = []
             tempDTList.clear()
@@ -222,6 +332,8 @@ if __name__ == "__main__":
                     # Inputs are not ready yet
             except RuntimeError:
                 pipeline.stop()
+                if args.imu:
+                    imu_pipe.stop()
 
             # align the deph to color frame
             aligned_frames = align.process(frames)
@@ -429,3 +541,5 @@ if __name__ == "__main__":
         # wsThread.join()
         # wsFrame.close()
         pipeline.stop()
+        if args.imu:
+            imu_pipe.stop()
