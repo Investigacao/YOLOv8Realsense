@@ -228,7 +228,7 @@ if __name__ == "__main__":
             "-s",
             "{}x{}".format(1280, 720),
             "-r",
-            str(5),
+            "20",
             "-i",
             "-",
             "-c:v",
@@ -312,8 +312,6 @@ if __name__ == "__main__":
     try:
         while True:
             print("=====================================")
-            if args.imu:
-                print(f"Roll: {imu.roll} Pitch: {imu.pitch} Yaw: {imu.yaw}")
 
             # messageDigitalTwin[:] = []
             # messageRobot[:] = []
@@ -478,6 +476,32 @@ if __name__ == "__main__":
                                     "H": fruit_height,
                                 }
                             )  # , "Class": "Tomato"
+                            if args.imu:
+                                # print(
+                                #     f"Roll: {imu.roll} Pitch: {imu.pitch} Yaw: {imu.yaw}"
+                                # )
+                                tempDTList.append(
+                                    {
+                                        "X": depthFromObjectToClaw,
+                                        "Y": yCoordinate,
+                                        "Z": zCoordinate,
+                                        "W": fruit_width,
+                                        "H": fruit_height,
+                                        "R": imu.roll,
+                                        "P": imu.pitch,
+                                        "Y": imu.yaw,
+                                    }
+                                )  # , "Class": "Tomato"
+                            else:
+                                tempDTList.append(
+                                    {
+                                        "X": depthFromObjectToClaw,
+                                        "Y": yCoordinate,
+                                        "Z": zCoordinate,
+                                        "W": fruit_width,
+                                        "H": fruit_height,
+                                    }
+                                )  # , "Class": "Tomato"
                             tempRobotList.append(
                                 {
                                     "x": depthFromObjectToClaw,
@@ -534,6 +558,8 @@ if __name__ == "__main__":
         print("Finished")
 
     finally:
+        p.stdin.close()
+        p.wait()
         pipeline.stop()
         if args.imu:
             imu.exit_event.set()

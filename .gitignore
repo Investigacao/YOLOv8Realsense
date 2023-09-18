@@ -10,3 +10,4 @@ train/*jpg
 bunWebsockets
 goSimpleWebscoketsClient
 autoLabelling
+myapp/bagFiles
