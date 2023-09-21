@@ -40,14 +40,16 @@ sendMessage = False
 tomatoDetected = Event()
 
 
-def handleThreadResponse(ws):
+def handleThreadResponse(ws, msg):
     global messageDigitalTwin
     global messageRobot
     global sendMessage
 
     sendMessage = True
     tomatoDetected.wait()
-
+    if msg["command"] == "D1":
+        messageRobot = [messageRobot[0]]
+        print(f"messageRobot: {messageRobot}")
     # Create a set of the target objects
     # sendMessageTopic(ws, "digital_twin", list(messageDigitalTwin))
     sendMessageTopic(ws, "robot", list(messageRobot))
@@ -62,9 +64,7 @@ def websocket_thread(ws):
         print(f"Received: {msg}")
         # if(msg.upper() != "XYZ"):
         #     continue
-        handleThreadResponse(ws)
-
-        break
+        handleThreadResponse(ws, msg)
 
 
 # def sendMessageTopics(ws, topics):
@@ -86,35 +86,7 @@ def get_message_digital_twin():
 
 # Define a function to run the Flask server in a separate thread
 def run_flask_server():
-    app.run(host="0.0.0.0", port=args.flask)
-
-
-def adjust_lateral_distance(lateral_distance):
-    # Calculate the absolute value for mapping
-    abs_lateral_distance = abs(lateral_distance)
-
-    if abs_lateral_distance <= 0.11:
-        # Values within the range [-0.11, 0.11] remain unchanged
-        adjusted_lateral_distance = lateral_distance
-    elif abs_lateral_distance >= 0.56:
-        # Values beyond 0.56 are mapped to 0.45 with the original sign
-        adjusted_lateral_distance = 0.45 if lateral_distance >= 0 else -0.45
-    else:
-        # Linear scaling between 0.11 and 0.56
-        scaled_lateral_distance = (abs_lateral_distance - 0.11) / (0.56 - 0.11)
-        adjusted_lateral_distance = (scaled_lateral_distance * 0.34) + 0.11
-        # Apply the original sign
-        adjusted_lateral_distance *= 1 if lateral_distance >= 0 else -1
-    if adjusted_lateral_distance > 0 and adjusted_lateral_distance < 0.11:
-        adjusted_lateral_distance -= 0.01
-
-    if adjusted_lateral_distance >= 0:
-        adjusted_lateral_distance = 1.2 * adjusted_lateral_distance - 0.04
-    # if adjusted_lateral_distance > 0:
-    #     adjusted_lateral_distance -= 0.05
-    #     x = adjusted_lateral_distance / 0.025
-    #     adjusted_lateral_distance = adjusted_lateral_distance - (x * 0.0025)
-    return adjusted_lateral_distance
+    app.run(host="0.0.0.0", port=5000)
 
 
 class IMU:
@@ -212,11 +184,16 @@ class IMU:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "-f", "--file", help="name.bag to stream using file instead of webcam"
+        "-f",
+        "--file",
+        action="store_true",
+        help="name.bag to stream using file instead of webcam",
     )
-    parser.add_argument("-ws", "--wsURL", help="url to connect to websocket server")
-    parser.add_argument("-fl", "--flask", type=int, help="flask server port")
-    parser.add_argument("-r", "--rtmp", help="rtmp key")
+    parser.add_argument(
+        "-ws", "--wsURL", action="store_true", help="url to connect to websocket server"
+    )
+    parser.add_argument("-fl", "--flask", action="store_true", help="flask server port")
+    parser.add_argument("-r", "--rtmp", action="store_true", help="rtmp key")
     parser.add_argument(
         "-wsF",
         "--wsFrame",
@@ -236,7 +213,8 @@ if __name__ == "__main__":
     if args.wsURL:
         cookie_value = "topics=ai;device=realsense"
 
-        ws.connect(args.wsURL, cookie=cookie_value)
+        # ws.connect("ws://10.79.179.10:31080/", cookie=cookie_value)
+        ws.connect("ws://localhost:3000/", cookie=cookie_value)
         # sendMessageTopics(ws, ["robot", "digital_twin"])
         wsThread = Thread(target=websocket_thread, args=(ws,))
         wsThread.daemon = True
@@ -255,7 +233,7 @@ if __name__ == "__main__":
             "-s",
             "{}x{}".format(1280, 720),
             "-r",
-            "20",
+            "25",
             "-i",
             "-",
             "-c:v",
@@ -266,7 +244,7 @@ if __name__ == "__main__":
             "flv",
             "-flvflags",
             "no_duration_filesize",
-            f"rtmp://127.0.0.1/live/{args.rtmp}",
+            "rtmp://10.79.179.10:31935/live/tomate",
         ]
         # 192.168.1.203:30439
         p = subprocess.Popen(command, stdin=subprocess.PIPE)
@@ -278,7 +256,9 @@ if __name__ == "__main__":
     config = rs.config()
     if args.file:
         try:
-            config.enable_device_from_file(args.file, repeat_playback=False)
+            config.enable_device_from_file(
+                "./myapp/bagFiles/20230428_115454.bag", repeat_playback=False
+            )
 
         except:
             print("Cannot enable device from: '{}'".format(args.file))
@@ -325,6 +305,29 @@ if __name__ == "__main__":
     depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()
     print(f"Depth Scale: {depth_scale:.4f}m")
 
+    #! NEW TEST
+    depth_min = 0.11  # meter
+    depth_max = 2.5  # meter
+    depth_intrin = (
+        profile.get_stream(rs.stream.depth).as_video_stream_profile().get_intrinsics()
+    )
+    color_intrin = (
+        profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+    )
+
+    depth_to_color_extrin = (
+        profile.get_stream(rs.stream.depth)
+        .as_video_stream_profile()
+        .get_extrinsics_to(profile.get_stream(rs.stream.color))
+    )
+    color_to_depth_extrin = (
+        profile.get_stream(rs.stream.color)
+        .as_video_stream_profile()
+        .get_extrinsics_to(profile.get_stream(rs.stream.depth))
+    )
+
+    #! NEW TEST OVER
+
     # Create a window for displaying the results
     # cv2.namedWindow("Detections", cv2.WINDOW_NORMAL)
     # cv2.resizeWindow("Detections", 800, 600)
@@ -338,6 +341,7 @@ if __name__ == "__main__":
     tempRobotList = []
     try:
         while True:
+            time.sleep(1)
             print("=====================================")
 
             # messageDigitalTwin[:] = []
@@ -439,14 +443,6 @@ if __name__ == "__main__":
                         # ? Relative Coordinates calculation
                         # * Y calculation (how far the arm has to move left or right)
                         # * if the object is to the left of the center of the camera, the value is negative
-                        yCoordinate = tan(radians(H_Angle)) * average_depth
-                        yCoordinate = (
-                            0.046 * (yCoordinate) ** 2
-                            + 0.863 * (yCoordinate)
-                            + 0.038
-                            - 0.01
-                        )
-                        yCoordinate = round(yCoordinate, 3)
 
                         # * Z Calculation (how much the arm has to move up or down)
                         # * (after multiplying by -1) -> if the object is above the center of the camera, the value is positive
@@ -482,41 +478,22 @@ if __name__ == "__main__":
                             ((fruit_height_pixels * distanceToFruit) / RESOLUTION_Y), 3
                         )
 
-                        # TODO -> CHECK IF THIS MAKES SENSE
-                        claw_origin = (OFFSET_FRONT, 0, -OFFSET_HEIGHT)
-                        fruit_location = (
-                            depthFromObjectToClaw,
-                            yCoordinate,
-                            zCoordinate,
-                        )
-                        distanceClawFruit = (
-                            (fruit_location[0] - claw_origin[0]) ** 2
-                            + (fruit_location[1] - claw_origin[1]) ** 2
-                            + (fruit_location[2] - claw_origin[2]) ** 2
-                        ) ** 0.5
-                        distanceClawFruit = round(distanceClawFruit, 6)
-
                         focal_length = 641.5252685546875
                         cx = 643.2230224609375
                         cy = 353.0408935546875
 
-                        # lateral_distance_meters = (
-                        #     ((cX - (RESOLUTION_X / 2)) * average_depth) / focal_length
-                        # ) + (-0.015)
+                        yCoordinate = ((cX - cx) * average_depth) / focal_length
 
-                        lateral_distance_meters = (
-                            (cX - cx) * average_depth
-                        ) / focal_length
+                        ## Correcao para y=0
+                        yCoordinate = yCoordinate - 0.045
 
-                        lateral_distance_meters = adjust_lateral_distance(
-                            lateral_distance_meters
+                        yCoordinate = (
+                            0.000204135 * (yCoordinate**2)
+                            + 0.712439 * yCoordinate
+                            - 0.00610406
                         )
 
-                        lateral_distance_meters = round(lateral_distance_meters, 3)
-
-                        # vertical_distance_meters = (
-                        #     (cY - (RESOLUTION_Y / 2)) * average_depth
-                        # ) / focal_length
+                        yCoordinate = round(yCoordinate, 3)
 
                         vertical_distance_meters = (
                             (cy - cY) * average_depth
@@ -526,17 +503,33 @@ if __name__ == "__main__":
                             vertical_distance_meters + OFFSET_HEIGHT, 3
                         )
 
+                        # TODO -> CHECK IF THIS MAKES SENSE
+                        claw_origin = (OFFSET_FRONT, 0, -OFFSET_HEIGHT)
+                        fruit_location = (
+                            depthFromObjectToClaw,
+                            yCoordinate,
+                            zCoordinate,
+                        )
+
+                        distanceClawFruit = (
+                            (fruit_location[0] - claw_origin[0]) ** 2
+                            + (fruit_location[1] - claw_origin[1]) ** 2
+                            + (fruit_location[2] - claw_origin[2]) ** 2
+                        ) ** 0.5
+                        distanceClawFruit = round(distanceClawFruit, 6)
+
                         objectName = result.names[int(box.cls[0])]
                         if (
                             objectName == "Red-Tomato"
                             or objectName == "Early-Red-Tomato"
-                        ):
+                            or objectName == "Green-Tomato"
+                        ) and depthFromObjectToClaw > 0.1:
                             # messageDigitalTwin.append({"X": depthFromObjectToClaw, "Y": yCoordinate, "Z": zCoordinate, "W": fruit_width, "H": fruit_height}) # , "Class": "Tomato"
                             # messageRobot.append({"X": depthFromObjectToClaw, "Y": yCoordinate, "Z": zCoordinate, "dClawToFruit": distanceClawFruit }) # , "Class": "Tomato"
                             tempDTList.append(
                                 {
                                     "X": depthFromObjectToClaw,
-                                    "Y": lateral_distance_meters,
+                                    "Y": yCoordinate,
                                     "Z": zCoordinate,
                                     "W": fruit_width,
                                     "H": fruit_height,
@@ -572,8 +565,8 @@ if __name__ == "__main__":
                             tempRobotList.append(
                                 {
                                     "x": depthFromObjectToClaw,
-                                    "y": lateral_distance_meters,
-                                    "z": zCoordinate,
+                                    "y": yCoordinate,
+                                    "z": vertical_distance_meters,
                                     "w": fruit_width,
                                     "dClawToFruit": distanceClawFruit,
                                 }
@@ -590,11 +583,11 @@ if __name__ == "__main__":
                         )
 
                         coords = (int(cX), int(cY) + 20)
-                        text = f"X: {depthFromObjectToClaw}\nY: {yCoordinate}\nY2: {lateral_distance_meters}\nZ: {zCoordinate}\nZ2: {vertical_distance_meters}\nW: {fruit_width}"
+                        text = f"X: {depthFromObjectToClaw}\nY: {yCoordinate}\nZ: {vertical_distance_meters}\nW: {fruit_width}"
                         lines = text.split("\n")
                         font = cv2.FONT_HERSHEY_SIMPLEX
-                        font_scale = 0.5
-                        font_thickness = 2
+                        font_scale = 1
+                        font_thickness = 3
                         font_color = (75, 0, 130)
                         line_height = (
                             int(
@@ -615,15 +608,6 @@ if __name__ == "__main__":
                                 font_color,
                                 font_thickness,
                             )
-                        # cv2.putText(
-                        #     annotated_frame,
-                        #     ,
-                        #     coords,
-                        #     cv2.FONT_HERSHEY_SIMPLEX,
-                        #     1,
-                        #     (0, 255, 0),
-                        #     2,
-                        # )
 
             messageDigitalTwin[:] = tempDTList
             messageRobot[:] = tempRobotList
