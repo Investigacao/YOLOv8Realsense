@@ -17,9 +17,9 @@ import math
 import sys
 
 # OFFSET robot Front
-OFFSET_FRONT = 0.035
+OFFSET_FRONT = 0.15
 # OFFSET robot Height
-OFFSET_HEIGHT = 0.05
+OFFSET_HEIGHT = 0.18
 
 # Color_Camera
 HFOV = 69
@@ -41,7 +41,6 @@ tomatoDetected = Event()
 
 
 def handleThreadResponse(ws):
-    print("handleThreadResponse")
     global messageDigitalTwin
     global messageRobot
     global sendMessage
@@ -88,6 +87,34 @@ def get_message_digital_twin():
 # Define a function to run the Flask server in a separate thread
 def run_flask_server():
     app.run(host="0.0.0.0", port=args.flask)
+
+
+def adjust_lateral_distance(lateral_distance):
+    # Calculate the absolute value for mapping
+    abs_lateral_distance = abs(lateral_distance)
+
+    if abs_lateral_distance <= 0.11:
+        # Values within the range [-0.11, 0.11] remain unchanged
+        adjusted_lateral_distance = lateral_distance
+    elif abs_lateral_distance >= 0.56:
+        # Values beyond 0.56 are mapped to 0.45 with the original sign
+        adjusted_lateral_distance = 0.45 if lateral_distance >= 0 else -0.45
+    else:
+        # Linear scaling between 0.11 and 0.56
+        scaled_lateral_distance = (abs_lateral_distance - 0.11) / (0.56 - 0.11)
+        adjusted_lateral_distance = (scaled_lateral_distance * 0.34) + 0.11
+        # Apply the original sign
+        adjusted_lateral_distance *= 1 if lateral_distance >= 0 else -1
+    if adjusted_lateral_distance > 0 and adjusted_lateral_distance < 0.11:
+        adjusted_lateral_distance -= 0.01
+
+    if adjusted_lateral_distance >= 0:
+        adjusted_lateral_distance = 1.2 * adjusted_lateral_distance - 0.04
+    # if adjusted_lateral_distance > 0:
+    #     adjusted_lateral_distance -= 0.05
+    #     x = adjusted_lateral_distance / 0.025
+    #     adjusted_lateral_distance = adjusted_lateral_distance - (x * 0.0025)
+    return adjusted_lateral_distance
 
 
 class IMU:
@@ -303,7 +330,7 @@ if __name__ == "__main__":
     # cv2.resizeWindow("Detections", 800, 600)
 
     # model = YOLO("./myapp/models/yolov8m-tomato.pt")
-    model = YOLO("./myapp/models/tomato-279-yoloS.pt")
+    model = YOLO("./myapp/models/tomato-308-yoloM.pt")
 
     # when stream is finished, RuntimeError is raised, hence this
     # exception block to capture this
@@ -343,7 +370,10 @@ if __name__ == "__main__":
                 print("No frames received")
 
             depth_image = np.asanyarray(aligned_depth_frame.get_data())
-            color_image = np.asanyarray(color_frame.get_data())[:, :, ::-1]
+            if args.file:
+                color_image = np.asanyarray(color_frame.get_data())[:, :, ::-1]
+            else:
+                color_image = np.asanyarray(color_frame.get_data())
 
             # Perform the prediction
             results = model.predict(
@@ -360,6 +390,8 @@ if __name__ == "__main__":
                         ]  # Access the corresponding box for the current mask
                         xywh = box.xywh[0].tolist()
                         cX, cY, width, height = xywh
+                        cX = int(cX)
+                        cY = int(cY)
 
                         #! Tentativa 1
                         # # Create a binary mask based on the pixel coordinates
@@ -464,48 +496,83 @@ if __name__ == "__main__":
                         ) ** 0.5
                         distanceClawFruit = round(distanceClawFruit, 6)
 
-                        if result.names[int(box.cls[0])] == "Green-Tomato":
+                        focal_length = 641.5252685546875
+                        cx = 643.2230224609375
+                        cy = 353.0408935546875
+
+                        # lateral_distance_meters = (
+                        #     ((cX - (RESOLUTION_X / 2)) * average_depth) / focal_length
+                        # ) + (-0.015)
+
+                        lateral_distance_meters = (
+                            (cX - cx) * average_depth
+                        ) / focal_length
+
+                        lateral_distance_meters = adjust_lateral_distance(
+                            lateral_distance_meters
+                        )
+
+                        lateral_distance_meters = round(lateral_distance_meters, 3)
+
+                        # vertical_distance_meters = (
+                        #     (cY - (RESOLUTION_Y / 2)) * average_depth
+                        # ) / focal_length
+
+                        vertical_distance_meters = (
+                            (cy - cY) * average_depth
+                        ) / focal_length
+
+                        vertical_distance_meters = round(
+                            vertical_distance_meters + OFFSET_HEIGHT, 3
+                        )
+
+                        objectName = result.names[int(box.cls[0])]
+                        if (
+                            objectName == "Red-Tomato"
+                            or objectName == "Early-Red-Tomato"
+                        ):
                             # messageDigitalTwin.append({"X": depthFromObjectToClaw, "Y": yCoordinate, "Z": zCoordinate, "W": fruit_width, "H": fruit_height}) # , "Class": "Tomato"
                             # messageRobot.append({"X": depthFromObjectToClaw, "Y": yCoordinate, "Z": zCoordinate, "dClawToFruit": distanceClawFruit }) # , "Class": "Tomato"
                             tempDTList.append(
                                 {
                                     "X": depthFromObjectToClaw,
-                                    "Y": yCoordinate,
+                                    "Y": lateral_distance_meters,
                                     "Z": zCoordinate,
                                     "W": fruit_width,
                                     "H": fruit_height,
                                 }
                             )  # , "Class": "Tomato"
-                            if args.imu:
-                                # print(
-                                #     f"Roll: {imu.roll} Pitch: {imu.pitch} Yaw: {imu.yaw}"
-                                # )
-                                tempDTList.append(
-                                    {
-                                        "X": depthFromObjectToClaw,
-                                        "Y": yCoordinate,
-                                        "Z": zCoordinate,
-                                        "W": fruit_width,
-                                        "H": fruit_height,
-                                        "R": imu.roll,
-                                        "P": imu.pitch,
-                                        "Y": imu.yaw,
-                                    }
-                                )  # , "Class": "Tomato"
-                            else:
-                                tempDTList.append(
-                                    {
-                                        "X": depthFromObjectToClaw,
-                                        "Y": yCoordinate,
-                                        "Z": zCoordinate,
-                                        "W": fruit_width,
-                                        "H": fruit_height,
-                                    }
-                                )  # , "Class": "Tomato"
+                            # if args.imu:
+                            #     # print(
+                            #     #     f"Roll: {imu.roll} Pitch: {imu.pitch} Yaw: {imu.yaw}"
+                            #     # )
+                            #     tempDTList.append(
+                            #         {
+                            #             "X": depthFromObjectToClaw,
+                            #             "Y": yCoordinate,
+                            #             "Z": zCoordinate,
+                            #             "W": fruit_width,
+                            #             "H": fruit_height,
+                            #             "R": imu.roll,
+                            #             "P": imu.pitch,
+                            #             "Y": imu.yaw,
+                            #         }
+                            #     )  # , "Class": "Tomato"
+                            # else:
+                            #     tempDTList.append(
+                            #         {
+                            #             "X": depthFromObjectToClaw,
+                            #             "Y": yCoordinate,
+                            #             "Z": zCoordinate,
+                            #             "W": fruit_width,
+                            #             "H": fruit_height,
+                            #         }
+                            #     )  # , "Class": "Tomato"
+
                             tempRobotList.append(
                                 {
                                     "x": depthFromObjectToClaw,
-                                    "y": yCoordinate,
+                                    "y": lateral_distance_meters,
                                     "z": zCoordinate,
                                     "w": fruit_width,
                                     "dClawToFruit": distanceClawFruit,
@@ -514,6 +581,49 @@ if __name__ == "__main__":
 
                         # draw a circle on the center of the box in annotated frame in blue color
                         # cv2.circle(annotated_frame, (int(cX), int(cY)), 5, (255, 0, 0), -1)
+                        cv2.circle(
+                            annotated_frame,
+                            (int(RESOLUTION_X / 2), int(RESOLUTION_Y / 2)),
+                            5,
+                            (255, 0, 0),
+                            -1,
+                        )
+
+                        coords = (int(cX), int(cY) + 20)
+                        text = f"X: {depthFromObjectToClaw}\nY: {yCoordinate}\nY2: {lateral_distance_meters}\nZ: {zCoordinate}\nZ2: {vertical_distance_meters}\nW: {fruit_width}"
+                        lines = text.split("\n")
+                        font = cv2.FONT_HERSHEY_SIMPLEX
+                        font_scale = 0.5
+                        font_thickness = 2
+                        font_color = (75, 0, 130)
+                        line_height = (
+                            int(
+                                cv2.getTextSize("A", font, font_scale, font_thickness)[
+                                    0
+                                ][1]
+                            )
+                            + 2
+                        )
+                        for i, line in enumerate(lines):
+                            y = coords[1] + i * line_height
+                            cv2.putText(
+                                annotated_frame,
+                                line,
+                                (coords[0], y),
+                                font,
+                                font_scale,
+                                font_color,
+                                font_thickness,
+                            )
+                        # cv2.putText(
+                        #     annotated_frame,
+                        #     ,
+                        #     coords,
+                        #     cv2.FONT_HERSHEY_SIMPLEX,
+                        #     1,
+                        #     (0, 255, 0),
+                        #     2,
+                        # )
 
             messageDigitalTwin[:] = tempDTList
             messageRobot[:] = tempRobotList
@@ -527,7 +637,7 @@ if __name__ == "__main__":
 
             if sendMessage and messageDigitalTwin:
                 tomatoDetected.set()
-                cv2.imwrite("frame.png", annotated_frame)
+                # cv2.imwrite("frame.png", annotated_frame)
 
             if args.rtmp:
                 # ? RTMP
@@ -553,13 +663,13 @@ if __name__ == "__main__":
             key = cv2.waitKey(1)
             if key == ord("q") or key == 27:
                 break
-
         cv2.destroyAllWindows()
         print("Finished")
 
     finally:
-        p.stdin.close()
-        p.wait()
+        if args.rtmp:
+            p.stdin.close()
+            p.wait()
         pipeline.stop()
         if args.imu:
             imu.exit_event.set()
