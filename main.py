@@ -62,6 +62,7 @@ def websocket_thread(ws):
     while True:
         msg = json.loads(ws.recv())
         print(f"Received: {msg}")
+
         # if(msg.upper() != "XYZ"):
         #     continue
         handleThreadResponse(ws, msg)
@@ -213,8 +214,8 @@ if __name__ == "__main__":
     if args.wsURL:
         cookie_value = "topics=ai;device=realsense"
 
-        # ws.connect("ws://10.79.179.10:31080/", cookie=cookie_value)
-        ws.connect("ws://localhost:3000/", cookie=cookie_value)
+        ws.connect("ws://10.79.179.10:31080/", cookie=cookie_value)
+        # ws.connect("ws://localhost:3000/", cookie=cookie_value)
         # sendMessageTopics(ws, ["robot", "digital_twin"])
         wsThread = Thread(target=websocket_thread, args=(ws,))
         wsThread.daemon = True
@@ -244,7 +245,7 @@ if __name__ == "__main__":
             "flv",
             "-flvflags",
             "no_duration_filesize",
-            "rtmp://10.79.179.10:31935/live/tomate",
+            "rtmp://10.79.179.10:31935/live/test",
         ]
         # 192.168.1.203:30439
         p = subprocess.Popen(command, stdin=subprocess.PIPE)
@@ -341,7 +342,6 @@ if __name__ == "__main__":
     tempRobotList = []
     try:
         while True:
-            time.sleep(1)
             print("=====================================")
 
             # messageDigitalTwin[:] = []
@@ -393,7 +393,7 @@ if __name__ == "__main__":
                             j
                         ]  # Access the corresponding box for the current mask
                         xywh = box.xywh[0].tolist()
-                        cX, cY, width, height = xywh
+                        cX, cY, bWidth, bHeight = xywh
                         cX = int(cX)
                         cY = int(cY)
 
@@ -468,8 +468,10 @@ if __name__ == "__main__":
                         zCoordinate = round(zCoordinate, 3)
 
                         # ? Calculus of the fruit width and height considering the depth to the object
-                        fruit_width_pixels = int((cX + width / 2 - (cX - width / 2)))
-                        fruit_height_pixels = int((cY + height / 2 - (cY - height / 2)))
+                        fruit_width_pixels = int((cX + bWidth / 2 - (cX - bWidth / 2)))
+                        fruit_height_pixels = int(
+                            (cY + bHeight / 2 - (cY - bHeight / 2))
+                        )
 
                         fruit_width = round(
                             ((fruit_width_pixels * distanceToFruit) / RESOLUTION_X), 3
@@ -503,6 +505,14 @@ if __name__ == "__main__":
                             vertical_distance_meters + OFFSET_HEIGHT, 3
                         )
 
+                        vertical_distance_meters = (
+                            0.096866 * (vertical_distance_meters**2)
+                            + 0.68 * vertical_distance_meters
+                            - 0.00160242
+                        )
+
+                        vertical_distance_meters = round(vertical_distance_meters, 3)
+
                         # TODO -> CHECK IF THIS MAKES SENSE
                         claw_origin = (OFFSET_FRONT, 0, -OFFSET_HEIGHT)
                         fruit_location = (
@@ -522,7 +532,6 @@ if __name__ == "__main__":
                         if (
                             objectName == "Red-Tomato"
                             or objectName == "Early-Red-Tomato"
-                            or objectName == "Green-Tomato"
                         ) and depthFromObjectToClaw > 0.1:
                             # messageDigitalTwin.append({"X": depthFromObjectToClaw, "Y": yCoordinate, "Z": zCoordinate, "W": fruit_width, "H": fruit_height}) # , "Class": "Tomato"
                             # messageRobot.append({"X": depthFromObjectToClaw, "Y": yCoordinate, "Z": zCoordinate, "dClawToFruit": distanceClawFruit }) # , "Class": "Tomato"
@@ -569,55 +578,74 @@ if __name__ == "__main__":
                                     "z": vertical_distance_meters,
                                     "w": fruit_width,
                                     "dClawToFruit": distanceClawFruit,
+                                    "cX": cX,
+                                    "cY": cY,
+                                    "bWidth": bWidth,
+                                    "bHeight": bHeight,
                                 }
                             )  # , "Class": "Tomato"
 
                         # draw a circle on the center of the box in annotated frame in blue color
                         # cv2.circle(annotated_frame, (int(cX), int(cY)), 5, (255, 0, 0), -1)
-                        cv2.circle(
-                            annotated_frame,
-                            (int(RESOLUTION_X / 2), int(RESOLUTION_Y / 2)),
-                            5,
-                            (255, 0, 0),
-                            -1,
-                        )
+            tempRobotList.sort(key=lambda x: x["dClawToFruit"])
+            for k, obj in enumerate(tempRobotList):
+                k += 1
+                cX = obj["cX"]
+                cY = obj["cY"]
+                depthFromObjectToClaw = obj["x"]
+                yCoordinate = obj["y"]
+                vertical_distance_meters = obj["z"]
+                fruit_width = obj["w"]
+                bWidth = obj["bWidth"]
+                bHeight = obj["bHeight"]
 
-                        coords = (int(cX), int(cY) + 20)
-                        text = f"X: {depthFromObjectToClaw}\nY: {yCoordinate}\nZ: {vertical_distance_meters}\nW: {fruit_width}"
-                        lines = text.split("\n")
-                        font = cv2.FONT_HERSHEY_SIMPLEX
-                        font_scale = 1
-                        font_thickness = 3
-                        font_color = (75, 0, 130)
-                        line_height = (
-                            int(
-                                cv2.getTextSize("A", font, font_scale, font_thickness)[
-                                    0
-                                ][1]
-                            )
-                            + 2
-                        )
-                        for i, line in enumerate(lines):
-                            y = coords[1] + i * line_height
-                            cv2.putText(
-                                annotated_frame,
-                                line,
-                                (coords[0], y),
-                                font,
-                                font_scale,
-                                font_color,
-                                font_thickness,
-                            )
+                x_tl = int(cX - (bWidth))
+                y_tl = int(cY)
+
+                font = cv2.FONT_HERSHEY_SIMPLEX
+
+                cv2.putText(
+                    annotated_frame,
+                    f"{k:02d}",
+                    (x_tl, y_tl),
+                    font,
+                    1,
+                    (255, 255, 0),
+                    2,
+                )
+
+                font_scale = 0.5
+                font_thickness = 2
+                font_color = (75, 0, 130)
+                line_height = (
+                    int(cv2.getTextSize("A", font, font_scale, font_thickness)[0][1])
+                    + 2
+                )
+                coords = (int(cX - bWidth / 2), int(cY) + 20)
+                text = f"X: {depthFromObjectToClaw}\nY: {yCoordinate}\nZ: {vertical_distance_meters}\nW: {fruit_width}"
+                lines = text.split("\n")
+                for i, line in enumerate(lines):
+                    y = coords[1] + i * line_height
+                    cv2.putText(
+                        annotated_frame,
+                        line,
+                        (coords[0], y),
+                        font,
+                        font_scale,
+                        font_color,
+                        font_thickness,
+                    )
 
             messageDigitalTwin[:] = tempDTList
-            messageRobot[:] = tempRobotList
-            messageRobot.sort(key=custom_sort)
 
-            # Remove the dClawToFruit from the objects
-            messageRobot = [
-                {k: v for k, v in obj.items() if k != "dClawToFruit"}
-                for obj in messageRobot
-            ]
+            for robot in tempRobotList:
+                del robot["cX"]
+                del robot["cY"]
+                del robot["bWidth"]
+                del robot["bHeight"]
+                del robot["dClawToFruit"]
+
+            messageRobot[:] = tempRobotList
 
             if sendMessage and messageDigitalTwin:
                 tomatoDetected.set()
