@@ -15,6 +15,7 @@ import subprocess
 import base64
 import math
 import sys
+from random import randint
 
 # OFFSET robot Front
 OFFSET_FRONT = 0.15
@@ -34,7 +35,7 @@ CENTER_POINT_Y = RESOLUTION_Y / 2
 app = Flask(__name__)
 
 manager = multiprocessing.Manager()
-messageDigitalTwin = manager.list()
+messageDigitalTwin = manager.dict()
 messageRobot = manager.list()
 sendMessage = False
 tomatoDetected = Event()
@@ -47,12 +48,13 @@ def handleThreadResponse(ws, msg):
 
     sendMessage = True
     tomatoDetected.wait()
-    if msg["command"] == "D1":
-        messageRobot = [messageRobot[0]]
-        print(f"messageRobot: {messageRobot}")
-    # Create a set of the target objects
-    # sendMessageTopic(ws, "digital_twin", list(messageDigitalTwin))
-    sendMessageTopic(ws, "robot", list(messageRobot))
+    if msg["command"] == "D":
+        if msg["command"] == "D1":
+            messageRobot = [messageRobot[0]]
+            print(f"messageRobot: {messageRobot}")
+        # Create a set of the target objects
+        sendMessageTopicDT(ws, "digital_twin", dict(messageDigitalTwin))
+        sendMessageTopic(ws, "robot", list(messageRobot))
 
     tomatoDetected.clear()
     sendMessage = False
@@ -74,8 +76,23 @@ def websocket_thread(ws):
 #         ws.send(json.dumps(message))
 
 
+def sendMessageTopicDT(ws, topic, message):
+    ws.send(json.dumps({"topic": topic, "data": message}))
+
+
 def sendMessageTopic(ws, topic, message):
     ws.send(json.dumps({"topic": topic, "data": {"command": "M", "data": message}}))
+
+
+def generate_random_integer(objectName):
+    if objectName == "Green-Tomato":
+        return randint(1, 10)
+    elif objectName == "Early-Red-Tomato":
+        return randint(11, 13)
+    elif objectName == "Red-Tomato":
+        return randint(14, 16)
+    else:
+        raise ValueError("Unknown objectName")
 
 
 @app.route("/get_message_digital_twin", methods=["GET"])
@@ -214,8 +231,8 @@ if __name__ == "__main__":
     if args.wsURL:
         cookie_value = "topics=ai;device=realsense"
 
-        ws.connect("ws://10.79.179.10:31080/", cookie=cookie_value)
-        # ws.connect("ws://localhost:3000/", cookie=cookie_value)
+        # ws.connect("ws://10.79.179.10:31080/", cookie=cookie_value)
+        ws.connect("ws://localhost:3000/", cookie=cookie_value)
         # sendMessageTopics(ws, ["robot", "digital_twin"])
         wsThread = Thread(target=websocket_thread, args=(ws,))
         wsThread.daemon = True
@@ -336,9 +353,21 @@ if __name__ == "__main__":
     # model = YOLO("./myapp/models/yolov8m-tomato.pt")
     model = YOLO("./myapp/models/tomato-308-yoloM.pt")
 
+    classes = model.names
+
     # when stream is finished, RuntimeError is raised, hence this
     # exception block to capture this
-    tempDTList = []
+    tempDT = {
+        "id": 0,
+        "treeDATA": {},
+        "fruitDATA": {key: [] for key in classes.values()},
+        "robotDATA": {
+            "robotPOS": {"x": 0, "y": 0, "z": 1.15},
+            "robotROT": {"roll": 0, "pitch": 0, "yaw": 0},
+            "robotREACH": 1,
+        },
+        "envLATLON": [39.733374, -8.822853],
+    }
     tempRobotList = []
     try:
         while True:
@@ -346,7 +375,8 @@ if __name__ == "__main__":
 
             # messageDigitalTwin[:] = []
             # messageRobot[:] = []
-            tempDTList.clear()
+            for key in tempDT["fruitDATA"]:
+                tempDT["fruitDATA"][key].clear()
             tempRobotList.clear()
             time_start = time.time()
             try:
@@ -528,22 +558,37 @@ if __name__ == "__main__":
                         ) ** 0.5
                         distanceClawFruit = round(distanceClawFruit, 6)
 
+                        # if objectName == "Red-Tomato" or objectName == "Early-Red-Tomato":
+
+                        for key in classes.values():
+                            if key not in tempDT["fruitDATA"]:
+                                tempDT["fruitDATA"][key] = []
+
                         objectName = result.names[int(box.cls[0])]
+
+                        tempDT["fruitDATA"][objectName].append(
+                            {
+                                "x": depthFromObjectToClaw,
+                                "y": yCoordinate,
+                                "z": vertical_distance_meters,
+                                "w": fruit_width,
+                                "h": fruit_height,
+                                # weeks randint from 1 to 10 if objectName is Green-Tomato, randint from 11 to 13 if objectName is Early-Red-Tomato, randint from 14 to 16 if objectName is Red-Tomato
+                                "weeks": generate_random_integer(objectName),
+                            }
+                        )
+                        # verde 1 a 10
+                        # early red 11 a 13
+                        # red 14 a 16
+
                         if (
                             objectName == "Red-Tomato"
                             or objectName == "Early-Red-Tomato"
                         ) and depthFromObjectToClaw > 0.1:
                             # messageDigitalTwin.append({"X": depthFromObjectToClaw, "Y": yCoordinate, "Z": zCoordinate, "W": fruit_width, "H": fruit_height}) # , "Class": "Tomato"
                             # messageRobot.append({"X": depthFromObjectToClaw, "Y": yCoordinate, "Z": zCoordinate, "dClawToFruit": distanceClawFruit }) # , "Class": "Tomato"
-                            tempDTList.append(
-                                {
-                                    "X": depthFromObjectToClaw,
-                                    "Y": yCoordinate,
-                                    "Z": zCoordinate,
-                                    "W": fruit_width,
-                                    "H": fruit_height,
-                                }
-                            )  # , "Class": "Tomato"
+
+                            # , "Class": "Tomato"
                             # if args.imu:
                             #     # print(
                             #     #     f"Roll: {imu.roll} Pitch: {imu.pitch} Yaw: {imu.yaw}"
@@ -636,7 +681,8 @@ if __name__ == "__main__":
                         font_thickness,
                     )
 
-            messageDigitalTwin[:] = tempDTList
+            messageDigitalTwin.clear()
+            messageDigitalTwin.update(tempDT)
 
             for robot in tempRobotList:
                 del robot["cX"]
