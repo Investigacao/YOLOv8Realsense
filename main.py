@@ -16,6 +16,8 @@ import base64
 import math
 import sys
 from random import randint
+from mjpeg_streamer import MjpegServer, Stream
+import logging
 
 # OFFSET robot Front
 OFFSET_FRONT = 0.15
@@ -48,13 +50,12 @@ def handleThreadResponse(ws, msg):
 
     sendMessage = True
     tomatoDetected.wait()
-    if msg["command"] == "D":
-        if msg["command"] == "D1":
-            messageRobot = [messageRobot[0]]
-            print(f"messageRobot: {messageRobot}")
-        # Create a set of the target objects
-        sendMessageTopicDT(ws, "digital_twin", dict(messageDigitalTwin))
-        sendMessageTopic(ws, "robot", list(messageRobot))
+
+    if msg["command"] == "D1" and messageRobot:
+        messageRobot = [messageRobot[0]]
+    # Create a set of the target objects
+    sendMessageTopicDT(ws, "digital_twin", dict(messageDigitalTwin))
+    sendMessageTopic(ws, "robot", list(messageRobot))
 
     tomatoDetected.clear()
     sendMessage = False
@@ -77,11 +78,13 @@ def websocket_thread(ws):
 
 
 def sendMessageTopicDT(ws, topic, message):
-    ws.send(json.dumps({"topic": topic, "data": message}))
+    msg = json.dumps({"topic": topic, "data": message})
+    ws.send(msg)
 
 
 def sendMessageTopic(ws, topic, message):
-    ws.send(json.dumps({"topic": topic, "data": {"command": "M", "data": message}}))
+    msg = json.dumps({"topic": topic, "data": {"command": "M", "data": message}})
+    ws.send(msg)
 
 
 def generate_random_integer(objectName):
@@ -95,11 +98,11 @@ def generate_random_integer(objectName):
         raise ValueError("Unknown objectName")
 
 
-@app.route("/get_message_digital_twin", methods=["GET"])
+@app.route("/get_message_robot", methods=["GET"])
 def get_message_digital_twin():
-    global messageDigitalTwin
-    print(f"messageDigitalTwin FLASK: {list(messageDigitalTwin)}")
-    return jsonify(list(messageDigitalTwin))
+    global messageRobot
+    print(f"messageDigitalTwin FLASK: {list(messageRobot)}")
+    return jsonify(list(messageRobot))
 
 
 # Define a function to run the Flask server in a separate thread
@@ -218,6 +221,7 @@ if __name__ == "__main__":
         help="url to connect to websocket server to send annotated frames",
     )
     parser.add_argument("-i", "--imu", action="store_true", help="Enable IMU reading")
+    parser.add_argument("-g", "--gstreamer", action="store_true", help="Gstreamer")
     args = parser.parse_args()
 
     if args.flask:
@@ -231,8 +235,8 @@ if __name__ == "__main__":
     if args.wsURL:
         cookie_value = "topics=ai;device=realsense"
 
-        # ws.connect("ws://10.79.179.10:31080/", cookie=cookie_value)
-        ws.connect("ws://localhost:3000/", cookie=cookie_value)
+        ws.connect("ws://10.79.179.10:31080/", cookie=cookie_value)
+        # ws.connect("ws://localhost:3000/", cookie=cookie_value)
         # sendMessageTopics(ws, ["robot", "digital_twin"])
         wsThread = Thread(target=websocket_thread, args=(ws,))
         wsThread.daemon = True
@@ -266,6 +270,14 @@ if __name__ == "__main__":
         ]
         # 192.168.1.203:30439
         p = subprocess.Popen(command, stdin=subprocess.PIPE)
+
+    gstream = None
+    server = None
+    if args.gstreamer:
+        gstream = Stream("my_camera", size=(1280, 720), quality=70, fps=22)
+        server = MjpegServer("0.0.0.0", 8080)
+        server.add_stream(gstream)
+        server.start()
 
     if args.wsFrame:
         wsFrame = websocket.WebSocket()
@@ -362,7 +374,7 @@ if __name__ == "__main__":
         "treeDATA": {},
         "fruitDATA": {key: [] for key in classes.values()},
         "robotDATA": {
-            "robotPOS": {"x": 0, "y": 0, "z": 1.15},
+            "robotPOS": {"x": 0.30, "y": 0.05, "z": 1.02},
             "robotROT": {"roll": 0, "pitch": 0, "yaw": 0},
             "robotREACH": 1,
         },
@@ -371,7 +383,7 @@ if __name__ == "__main__":
     tempRobotList = []
     try:
         while True:
-            print("=====================================")
+            # print("=====================================")
 
             # messageDigitalTwin[:] = []
             # messageRobot[:] = []
@@ -411,7 +423,7 @@ if __name__ == "__main__":
 
             # Perform the prediction
             results = model.predict(
-                source=color_image, line_width=5, boxes=False, device=0
+                source=color_image, line_width=5, boxes=False, device=0, verbose=False
             )
 
             annotated_frame = results[0].plot()
@@ -702,6 +714,9 @@ if __name__ == "__main__":
                 rtmp_frames = annotated_frame[:, :, ::-1]
                 p.stdin.write(rtmp_frames.tobytes())
 
+            if args.gstreamer:
+                gstream.set_frame(annotated_frame)
+
             if args.wsFrame:
                 # Convert the frame to JPEG format
                 _, buffer = cv2.imencode(".jpg", annotated_frame)
@@ -716,7 +731,7 @@ if __name__ == "__main__":
 
             time_end = time.time()
             total_time = time_end - time_start
-            print("FPS: {:.2f}\n".format(1 / total_time))
+            # print("FPS: {:.2f}\n".format(1 / total_time))
 
             key = cv2.waitKey(1)
             if key == ord("q") or key == 27:
@@ -725,10 +740,12 @@ if __name__ == "__main__":
         print("Finished")
 
     finally:
+        pipeline.stop()
         if args.rtmp:
             p.stdin.close()
             p.wait()
-        pipeline.stop()
+        if args.gstreamer:
+            server.stop()
         if args.imu:
             imu.exit_event.set()
             imu.imu_pipe.stop()
