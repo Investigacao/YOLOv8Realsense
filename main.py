@@ -61,6 +61,22 @@ def handleThreadResponse(ws, msg):
     sendMessage = False
 
 
+def websocket_thread_IPL_NOVA(ws):
+    global tempDT
+    while True:
+        avancar_sum = 0
+        msg = json.loads(ws.recv())
+        print(f"Received: {msg}")
+
+        for movement in msg["movimentos"]:
+            if "avancar" in movement:
+                avancar_sum += movement["avancar"]
+
+        result = avancar_sum / 100
+        if result > 0:
+            tempDT["robotDATA"]["robotPOS"]["x"] += result
+
+
 def websocket_thread(ws):
     while True:
         msg = json.loads(ws.recv())
@@ -78,8 +94,10 @@ def websocket_thread(ws):
 
 
 def sendMessageTopicDT(ws, topic, message):
+    global tempDT
     msg = json.dumps({"topic": topic, "data": message})
     ws.send(msg)
+    tempDT["robotDATA"]["robotPOS"]["x"] = 0.3
 
 
 def sendMessageTopic(ws, topic, message):
@@ -89,7 +107,9 @@ def sendMessageTopic(ws, topic, message):
 
 def generate_random_integer(objectName):
     if objectName == "Green-Tomato":
-        return randint(1, 10)
+        return randint(1, 5)
+    elif objectName == "Late-Green-Tomato":
+        return randint(6, 10)
     elif objectName == "Early-Red-Tomato":
         return randint(11, 13)
     elif objectName == "Red-Tomato":
@@ -213,6 +233,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "-ws", "--wsURL", action="store_true", help="url to connect to websocket server"
     )
+    parser.add_argument(
+        "-ws_IPL_NOVA",
+        "--wsURL_IPL_NOVA",
+        action="store_true",
+        help="url to connect to the public websocket server",
+    )
     parser.add_argument("-fl", "--flask", action="store_true", help="flask server port")
     parser.add_argument("-r", "--rtmp", action="store_true", help="rtmp key")
     parser.add_argument(
@@ -221,6 +247,12 @@ if __name__ == "__main__":
         help="url to connect to websocket server to send annotated frames",
     )
     parser.add_argument("-i", "--imu", action="store_true", help="Enable IMU reading")
+    parser.add_argument(
+        "-p",
+        "--production",
+        action="store_true",
+        help="If in production changes the websocket servers to the production ones",
+    )
     parser.add_argument("-g", "--gstreamer", action="store_true", help="Gstreamer")
     args = parser.parse_args()
 
@@ -233,14 +265,26 @@ if __name__ == "__main__":
     wsThread = None
     ws = websocket.WebSocket()
     if args.wsURL:
-        cookie_value = "topics=ai;device=realsense"
-
-        ws.connect("ws://10.79.179.10:31080/", cookie=cookie_value)
-        # ws.connect("ws://localhost:3000/", cookie=cookie_value)
+        cookie_value = "topics=ai;device=realsenseAI"
+        if args.production:
+            ws.connect("ws://10.79.179.10:31080/", cookie=cookie_value)
+        else:
+            ws.connect("ws://localhost:3000/", cookie=cookie_value)
         # sendMessageTopics(ws, ["robot", "digital_twin"])
         wsThread = Thread(target=websocket_thread, args=(ws,))
         wsThread.daemon = True
         wsThread.start()
+
+    wsIplNovaThread = None
+    wsIplNova = websocket.WebSocket()
+    if args.wsURL_IPL_NOVA:
+        if args.production:
+            wsIplNova.connect("wss://ws.pfcouto.eu.org?device=realsenseAI")
+        else:
+            wsIplNova.connect("ws://localhost:3001?device=realsenseAI")
+        wsIplNovaThread = Thread(target=websocket_thread_IPL_NOVA, args=(wsIplNova,))
+        wsIplNovaThread.daemon = True
+        wsIplNovaThread.start()
 
     if args.rtmp:
         command = [
@@ -362,8 +406,8 @@ if __name__ == "__main__":
     # cv2.namedWindow("Detections", cv2.WINDOW_NORMAL)
     # cv2.resizeWindow("Detections", 800, 600)
 
-    # model = YOLO("./myapp/models/yolov8m-tomato.pt")
-    model = YOLO("./myapp/models/tomato-308-yoloM.pt")
+    # model = YOLO("./myapp/models/tomato-308-yoloM.pt")
+    model = YOLO("./train/runs/segment/train6/weights/best.pt")
 
     classes = model.names
 
@@ -570,8 +614,6 @@ if __name__ == "__main__":
                         ) ** 0.5
                         distanceClawFruit = round(distanceClawFruit, 6)
 
-                        # if objectName == "Red-Tomato" or objectName == "Early-Red-Tomato":
-
                         for key in classes.values():
                             if key not in tempDT["fruitDATA"]:
                                 tempDT["fruitDATA"][key] = []
@@ -589,9 +631,6 @@ if __name__ == "__main__":
                                 "weeks": generate_random_integer(objectName),
                             }
                         )
-                        # verde 1 a 10
-                        # early red 11 a 13
-                        # red 14 a 16
 
                         if (
                             objectName == "Red-Tomato"
